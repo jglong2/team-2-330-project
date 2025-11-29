@@ -1,38 +1,60 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using MySql.Data.MySqlClient;
+using System.Data;
 
 namespace api.DataAccess
 {
-    public class Database
+    public class DatabaseService
     {
-        using api.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+        private readonly string _connectionString;
 
-namespace api.DataAccess
-{
-    public class Database
-    {
-        public string host { get; set; }
-        public string database { get; set; }
-        public string username { get; set; }
-        public string password { get; set; }
-        public int port { get; set; }
-        public string connectionString {get; set;}
-
-        public Database(){
-            host = "l9dwvv6j64hlhpul.cbetxkdyhwsb.us-east-1.rds.amazonaws.com";
-            database = "ax31jflmjpn9yf5a";
-            username = "dtriiqtuan5j3yqz";
-            password = "kqy84xyyxe24fkiv";
-            port = 3306;
-            connectionString = $"Server={host};Database={database};User Id={username};Password={password};Port={port};";
+        public DatabaseService(IConfiguration configuration)
+        {
+            _connectionString = configuration.GetConnectionString("DefaultConnection") 
+                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
         }
-    }
-}
+
+        public async Task<MySqlConnection> GetConnectionAsync()
+        {
+            var connection = new MySqlConnection(_connectionString);
+            await connection.OpenAsync();
+            return connection;
+        }
+
+        public async Task<int> ExecuteNonQueryAsync(string query, params MySqlParameter[] parameters)
+        {
+            using var connection = await GetConnectionAsync();
+            using var command = new MySqlCommand(query, connection);
+            if (parameters != null)
+            {
+                command.Parameters.AddRange(parameters);
+            }
+            return await command.ExecuteNonQueryAsync();
+        }
+
+        public async Task<object?> ExecuteScalarAsync(string query, params MySqlParameter[] parameters)
+        {
+            using var connection = await GetConnectionAsync();
+            using var command = new MySqlCommand(query, connection);
+            if (parameters != null)
+            {
+                command.Parameters.AddRange(parameters);
+            }
+            return await command.ExecuteScalarAsync();
+        }
+
+        public async Task<DataTable> ExecuteQueryAsync(string query, params MySqlParameter[] parameters)
+        {
+            using var connection = await GetConnectionAsync();
+            using var command = new MySqlCommand(query, connection);
+            if (parameters != null)
+            {
+                command.Parameters.AddRange(parameters);
+            }
+            using var adapter = new MySqlDataAdapter(command);
+            var dataTable = new DataTable();
+            await Task.Run(() => adapter.Fill(dataTable));
+            return dataTable;
+        }
     }
 }
