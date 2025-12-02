@@ -73,7 +73,7 @@ async function getClientSessions(clientId) {
 }
 
 /**
- * Cancel a booking
+ * Cancel a booking (by client)
  */
 async function cancelBooking(bookingId, clientId) {
   return await apiCall(`/bookings/${bookingId}/cancel`, {
@@ -83,11 +83,38 @@ async function cancelBooking(bookingId, clientId) {
 }
 
 /**
+ * Confirm a pending booking (by trainer)
+ */
+async function confirmBooking(bookingId, trainerId) {
+  return await apiCall(`/bookings/${bookingId}/confirm`, {
+    method: 'PUT',
+    body: JSON.stringify({ trainerId: trainerId }),
+  });
+}
+
+/**
+ * Cancel a booking (by trainer)
+ */
+async function cancelBookingByTrainer(bookingId, trainerId) {
+  return await apiCall(`/bookings/${bookingId}/cancel-trainer`, {
+    method: 'PUT',
+    body: JSON.stringify({ trainerId: trainerId }),
+  });
+}
+
+/**
  * Get available time slots for a trainer on a specific day
  */
 async function getAvailableSlots(trainerId, day, clientId = null) {
   const endpoint = `/bookings/available-slots/${trainerId}/${encodeURIComponent(day)}${clientId ? `?clientId=${clientId}` : ''}`;
   return await apiCall(endpoint);
+}
+
+/**
+ * Get all facilities
+ */
+async function getFacilities() {
+  return await apiCall('/facilities');
 }
 
 /**

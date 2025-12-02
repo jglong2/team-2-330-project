@@ -13,5 +13,15 @@ namespace api.Models
     {
         public int clientId { get; set; }
     }
+
+    public class ConfirmBookingRequest
+    {
+        public int trainerId { get; set; }
+    }
+
+    public class CancelBookingByTrainerRequest
+    {
+        public int trainerId { get; set; }
+    }
 }
 

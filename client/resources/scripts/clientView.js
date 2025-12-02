@@ -137,15 +137,20 @@ async function openBookingModal(trainerId) {
     const trainer = await getTrainer(trainerId);
     selectedTrainer = trainer;
 
-    // Get trainer availability
+    // Get trainer availability and facilities in parallel
     let availability = [];
+    let facilities = [];
+    
     try {
-      availability = await getTrainerAvailability(trainerId);
+      [availability, facilities] = await Promise.all([
+        getTrainerAvailability(trainerId).catch((e) => { console.warn('Could not load availability:', e); return []; }),
+        getFacilities().catch((e) => { console.warn('Could not load facilities:', e); return []; })
+      ]);
     } catch (error) {
-      console.warn('Could not load availability:', error);
+      console.warn('Error loading data:', error);
     }
 
-    await renderBookingModal(trainer, availability);
+    await renderBookingModal(trainer, availability, facilities);
   } catch (error) {
     showAlert('Error loading trainer details: ' + error.message, 'danger');
   }
@@ -154,7 +159,7 @@ async function openBookingModal(trainerId) {
 /**
  * Render booking modal
  */
-async function renderBookingModal(trainer, availability) {
+async function renderBookingModal(trainer, availability, facilities = []) {
   const user = getCurrentUser();
   const clientId = user?.clientId || null;
   const trainerId = trainer.trainerID || trainer.TrainerID;
@@ -214,13 +219,17 @@ async function renderBookingModal(trainer, availability) {
 
               <div class="mb-3">
                 <label for="facilityId" class="form-label">Facility (Optional)</label>
-                <input
-                  type="number"
-                  class="form-control"
-                  id="facilityId"
-                  placeholder="Leave empty if no facility needed"
-                  min="0"
-                />
+                <select class="form-select" id="facilityId">
+                  <option value="">No facility needed</option>
+                  ${facilities && facilities.length > 0 ? facilities.map(facility => {
+                    const id = facility.facilityID || facility.FacilityID;
+                    const address = facility.address || facility.Address || '';
+                    const room = facility.room_Number || facility.Room_Number || '';
+                    const equipment = facility.equipment_Set || facility.Equipment_Set || '';
+                    const displayText = `${address} - Room ${room}${equipment ? ` (${equipment})` : ''}`;
+                    return `<option value="${id}">${displayText}</option>`;
+                  }).join('') : ''}
+                </select>
               </div>
 
               <div class="alert alert-info">
@@ -385,8 +394,9 @@ async function processBooking() {
   const trainerId = parseInt(document.getElementById('trainerId').value);
   const bookingDay = document.getElementById('bookingDay').value;
   const selectedTime = document.getElementById('selectedTime').value;
-  const facilityId = document.getElementById('facilityId').value 
-    ? parseInt(document.getElementById('facilityId').value) 
+  const facilityIdValue = document.getElementById('facilityId').value;
+  const facilityId = facilityIdValue && facilityIdValue.trim() !== '' 
+    ? parseInt(facilityIdValue) 
     : null;
 
   // Validate required fields
@@ -443,7 +453,7 @@ async function processBooking() {
 
     // Show success message
     showAlert(
-      `✅ Payment Successful! Booking confirmed. Booking ID: ${result.bookingId || result.bookingID}`,
+      `✅ Payment Successful! Your booking request has been submitted and is pending trainer approval. Booking ID: ${result.bookingId || result.bookingID}`,
       'success'
     );
 
@@ -516,47 +526,102 @@ async function loadClientSessions() {
       return;
     }
 
-    sessionsList.innerHTML = `
-      <div class="table-responsive">
-        <table class="table table-striped table-hover">
-          <thead class="table-dark">
-            <tr>
-              <th>Booking ID</th>
-              <th>Trainer</th>
-              <th>Day</th>
-              <th>Time</th>
-              <th>Status</th>
-              <th>Amount Paid</th>
-              <th>Payment Date</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${sessions.map(session => `
+    // Group sessions by status
+    const scheduledSessions = sessions.filter(s => {
+      const status = s.bookingStatus.toLowerCase();
+      return status === 'confirmed' || status === 'scheduled';
+    });
+
+    const pendingSessions = sessions.filter(s => {
+      const status = s.bookingStatus.toLowerCase();
+      return status === 'pending';
+    });
+
+    const cancelledSessions = sessions.filter(s => {
+      const status = s.bookingStatus.toLowerCase();
+      return status === 'cancelled';
+    });
+
+    // Helper function to render a session table
+    const renderSessionTable = (sessionGroup, showActions = true, showEmptyMessage = false) => {
+      if (sessionGroup.length === 0) {
+        if (showEmptyMessage) {
+          return '<p class="text-muted mb-0">No pending sessions at this time.</p>';
+        }
+        return '';
+      }
+
+      return `
+        <div class="table-responsive">
+          <table class="table table-striped table-hover">
+            <thead class="table-dark">
               <tr>
-                <td>#${session.bookingID}</td>
-                <td>${session.trainerName}</td>
-                <td>${session.bookingDay}</td>
-                <td>${session.bookingTime}</td>
-                <td>
-                  <span class="badge ${getStatusBadgeClass(session.bookingStatus)}">
-                    ${session.bookingStatus}
-                  </span>
-                </td>
-                <td>$${parseFloat(session.paymentAmount).toFixed(2)}</td>
-                <td>${session.paymentDate}</td>
-                <td>
-                  ${session.bookingStatus.toLowerCase() !== 'cancelled' 
-                    ? `<button class="btn btn-sm btn-danger" onclick="handleCancelBooking(${session.bookingID})" title="Cancel this booking">
-                         Cancel
-                       </button>`
-                    : '<span class="text-muted">-</span>'}
-                </td>
+                <th>Booking ID</th>
+                <th>Trainer</th>
+                <th>Day</th>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Amount Paid</th>
+                <th>Payment Date</th>
+                ${showActions ? '<th>Actions</th>' : ''}
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${sessionGroup.map(session => `
+                <tr>
+                  <td>#${session.bookingID}</td>
+                  <td>${session.trainerName}</td>
+                  <td>${session.bookingDay}</td>
+                  <td>${session.bookingTime}</td>
+                  <td>
+                    <span class="badge ${getStatusBadgeClass(session.bookingStatus)}">
+                      ${session.bookingStatus}
+                    </span>
+                  </td>
+                  <td>$${parseFloat(session.paymentAmount).toFixed(2)}</td>
+                  <td>${session.paymentDate}</td>
+                  ${showActions ? `
+                    <td>
+                      ${session.bookingStatus.toLowerCase() !== 'cancelled' 
+                        ? `<button class="btn btn-sm btn-danger" onclick="handleCancelBooking(${session.bookingID})" title="Cancel this booking">
+                             Cancel
+                           </button>`
+                        : '<span class="text-muted">-</span>'}
+                    </td>
+                  ` : ''}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    sessionsList.innerHTML = `
+      ${scheduledSessions.length > 0 ? `
+        <div class="mb-4">
+          <h4 class="mb-3">Scheduled Sessions</h4>
+          ${renderSessionTable(scheduledSessions)}
+        </div>
+      ` : ''}
+      
+      <div class="mb-4">
+        <h4 class="mb-3">Pending Sessions</h4>
+        ${renderSessionTable(pendingSessions, true, true)}
       </div>
+      
+      ${cancelledSessions.length > 0 ? `
+        <div class="mb-4">
+          <h4 class="mb-3">Cancelled Sessions</h4>
+          ${renderSessionTable(cancelledSessions, false)}
+        </div>
+      ` : ''}
+      
+      ${scheduledSessions.length === 0 && pendingSessions.length === 0 && cancelledSessions.length === 0 ? `
+        <div class="alert alert-info">
+          <h5>No sessions found</h5>
+        </div>
+      ` : ''}
     `;
   } catch (error) {
     sessionsList.innerHTML = `
@@ -575,6 +640,8 @@ function getStatusBadgeClass(status) {
   const statusLower = status.toLowerCase();
   if (statusLower === 'scheduled' || statusLower === 'confirmed') {
     return 'bg-success';
+  } else if (statusLower === 'pending') {
+    return 'bg-warning text-dark';
   } else if (statusLower === 'cancelled') {
     return 'bg-danger';
   } else if (statusLower === 'completed') {

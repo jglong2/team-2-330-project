@@ -19,32 +19,49 @@ namespace api.Controllers
 
         // GET: api/bookings/sessions/5
         [HttpGet("sessions/{trainerId}")]
-        public async Task<ActionResult<IEnumerable<SessionBooking>>> GetSessions(int trainerId)
+        public async Task<ActionResult<IEnumerable<object>>> GetSessions(int trainerId)
         {
             try
             {
                 string query = @"
-                    SELECT BookingID, clientid, TrainerID, paymentID, Booking_Day, 
-                           Booking_Time, bookingStatus, statusUpdateTime 
-                    FROM Session_Booking 
-                    WHERE TrainerID = @trainerId 
-                    ORDER BY Booking_Day, Booking_Time";
+                    SELECT 
+                        sb.BookingID, 
+                        sb.clientid, 
+                        sb.TrainerID, 
+                        sb.paymentID, 
+                        sb.Booking_Day, 
+                        sb.Booking_Time, 
+                        sb.bookingStatus, 
+                        sb.statusUpdateTime,
+                        c.clientname,
+                        c.cardnumber
+                    FROM Session_Booking sb
+                    INNER JOIN Client c ON sb.clientid = c.clientid
+                    WHERE sb.TrainerID = @trainerId 
+                    ORDER BY sb.Booking_Day, sb.Booking_Time";
 
                 var dataTable = await _dbService.ExecuteQueryAsync(query, new MySqlParameter("@trainerId", trainerId));
-                var sessions = new List<SessionBooking>();
+                var sessions = new List<object>();
 
                 foreach (DataRow row in dataTable.Rows)
                 {
-                    sessions.Add(new SessionBooking
+                    string cardNumber = row["cardnumber"].ToString() ?? string.Empty;
+                    string lastFour = cardNumber.Length >= 4 
+                        ? cardNumber.Substring(cardNumber.Length - 4) 
+                        : "****";
+                    
+                    sessions.Add(new
                     {
-                        BookingID = Convert.ToInt32(row["BookingID"]),
+                        bookingID = Convert.ToInt32(row["BookingID"]),
                         clientid = Convert.ToInt32(row["clientid"]),
-                        TrainerID = Convert.ToInt32(row["TrainerID"]),
+                        trainerID = Convert.ToInt32(row["TrainerID"]),
                         paymentID = Convert.ToInt32(row["paymentID"]),
-                        Booking_Day = row["Booking_Day"].ToString() ?? string.Empty,
-                        Booking_Time = TimeSpan.Parse(row["Booking_Time"].ToString() ?? "00:00:00"),
+                        bookingDay = row["Booking_Day"].ToString() ?? string.Empty,
+                        bookingTime = TimeSpan.Parse(row["Booking_Time"].ToString() ?? "00:00:00"),
                         bookingStatus = row["bookingStatus"].ToString() ?? "Scheduled",
-                        statusUpdateTime = Convert.ToDateTime(row["statusUpdateTime"])
+                        statusUpdateTime = Convert.ToDateTime(row["statusUpdateTime"]),
+                        clientName = row["clientname"].ToString() ?? "Unknown",
+                        cardLastFour = lastFour
                     });
                 }
 
@@ -99,6 +116,7 @@ namespace api.Controllers
                 string normalizedDay = availableDays.First(d => d.Equals(day, StringComparison.OrdinalIgnoreCase));
 
                 // Get all bookings for this trainer on this day (case-insensitive day matching)
+                // Exclude cancelled bookings and include pending bookings (they block the slot)
                 string trainerBookingsQuery = @"
                     SELECT Booking_Time 
                     FROM Session_Booking 
@@ -432,7 +450,7 @@ namespace api.Controllers
 
                 string bookingQuery = @"
                     INSERT INTO Session_Booking (BookingID, clientid, TrainerID, paymentID, Booking_Day, Booking_Time, bookingStatus, statusUpdateTime)
-                    VALUES (@bookingId, @clientid, @trainerId, @paymentId, @bookingDay, @bookingTime, 'Scheduled', NOW())";
+                    VALUES (@bookingId, @clientid, @trainerId, @paymentId, @bookingDay, @bookingTime, 'Pending', NOW())";
 
                 var bookingParams = new[]
                 {
@@ -588,6 +606,150 @@ namespace api.Controllers
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"CancelBooking Error: {ex.Message}");
+                return StatusCode(500, new { error = "An error occurred while cancelling booking", message = ex.Message });
+            }
+        }
+
+        // PUT: api/bookings/{bookingId}/confirm
+        [HttpPut("{bookingId}/confirm")]
+        public async Task<ActionResult<object>> ConfirmBooking(int bookingId, [FromBody] ConfirmBookingRequest request)
+        {
+            try
+            {
+                if (request == null || request.trainerId <= 0)
+                {
+                    return BadRequest(new { error = "Trainer ID is required" });
+                }
+
+                // Verify the booking exists and belongs to the trainer
+                string verifyQuery = @"
+                    SELECT BookingID, TrainerID, bookingStatus 
+                    FROM Session_Booking 
+                    WHERE BookingID = @bookingId 
+                    AND TrainerID = @trainerId";
+
+                var verifyTable = await _dbService.ExecuteQueryAsync(
+                    verifyQuery,
+                    new MySqlParameter("@bookingId", bookingId),
+                    new MySqlParameter("@trainerId", request.trainerId)
+                );
+
+                if (verifyTable.Rows.Count == 0)
+                {
+                    return NotFound(new { error = "Booking not found or you don't have permission to confirm this booking" });
+                }
+
+                string currentStatus = verifyTable.Rows[0]["bookingStatus"].ToString() ?? "";
+                if (!currentStatus.Equals("Pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new { error = $"This booking cannot be confirmed. Current status: {currentStatus}" });
+                }
+
+                // Update booking status to Confirmed
+                string updateQuery = @"
+                    UPDATE Session_Booking 
+                    SET bookingStatus = 'Confirmed', 
+                        statusUpdateTime = NOW()
+                    WHERE BookingID = @bookingId 
+                    AND TrainerID = @trainerId";
+
+                int rowsAffected = await _dbService.ExecuteNonQueryAsync(
+                    updateQuery,
+                    new MySqlParameter("@bookingId", bookingId),
+                    new MySqlParameter("@trainerId", request.trainerId)
+                );
+
+                if (rowsAffected == 0)
+                {
+                    return NotFound(new { error = "Booking not found or could not be confirmed" });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Booking confirmed successfully",
+                    bookingId = bookingId
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ConfirmBooking Error: {ex.Message}");
+                return StatusCode(500, new { error = "An error occurred while confirming booking", message = ex.Message });
+            }
+        }
+
+        // PUT: api/bookings/{bookingId}/cancel-trainer
+        [HttpPut("{bookingId}/cancel-trainer")]
+        public async Task<ActionResult<object>> CancelBookingByTrainer(int bookingId, [FromBody] CancelBookingByTrainerRequest request)
+        {
+            try
+            {
+                if (request == null || request.trainerId <= 0)
+                {
+                    return BadRequest(new { error = "Trainer ID is required" });
+                }
+
+                // Verify the booking exists and belongs to the trainer
+                string verifyQuery = @"
+                    SELECT BookingID, TrainerID, bookingStatus 
+                    FROM Session_Booking 
+                    WHERE BookingID = @bookingId 
+                    AND TrainerID = @trainerId";
+
+                var verifyTable = await _dbService.ExecuteQueryAsync(
+                    verifyQuery,
+                    new MySqlParameter("@bookingId", bookingId),
+                    new MySqlParameter("@trainerId", request.trainerId)
+                );
+
+                if (verifyTable.Rows.Count == 0)
+                {
+                    return NotFound(new { error = "Booking not found or you don't have permission to cancel this booking" });
+                }
+
+                string currentStatus = verifyTable.Rows[0]["bookingStatus"].ToString() ?? "";
+                if (currentStatus.Equals("Cancelled", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new { error = "This booking has already been cancelled" });
+                }
+
+                // Allow cancellation of pending, confirmed, or scheduled bookings
+                if (!currentStatus.Equals("Pending", StringComparison.OrdinalIgnoreCase) && 
+                    !currentStatus.Equals("Confirmed", StringComparison.OrdinalIgnoreCase) &&
+                    !currentStatus.Equals("Scheduled", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new { error = $"This booking cannot be cancelled. Current status: {currentStatus}" });
+                }
+
+                // Update booking status to Cancelled
+                string updateQuery = @"
+                    UPDATE Session_Booking 
+                    SET bookingStatus = 'Cancelled', 
+                        statusUpdateTime = NOW()
+                    WHERE BookingID = @bookingId 
+                    AND TrainerID = @trainerId";
+
+                int rowsAffected = await _dbService.ExecuteNonQueryAsync(
+                    updateQuery,
+                    new MySqlParameter("@bookingId", bookingId),
+                    new MySqlParameter("@trainerId", request.trainerId)
+                );
+
+                if (rowsAffected == 0)
+                {
+                    return NotFound(new { error = "Booking not found or could not be cancelled" });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Booking cancelled successfully",
+                    bookingId = bookingId
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CancelBookingByTrainer Error: {ex.Message}");
                 return StatusCode(500, new { error = "An error occurred while cancelling booking", message = ex.Message });
             }
         }

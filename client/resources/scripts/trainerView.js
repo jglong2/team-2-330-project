@@ -241,28 +241,67 @@ function renderSessionsTable(sessions) {
               <th>Day</th>
               <th>Time</th>
               <th>Duration</th>
-              <th>Client ID</th>
-              <th>Payment ID</th>
+              <th>Client Name</th>
+              <th>Card (Last 4)</th>
               <th>Status</th>
+              <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           ${sessions
             .map(
-              (session) => `
+              (session) => {
+                const status = session.bookingStatus || session.booking_Status || 'Unknown';
+                const statusLower = status.toLowerCase();
+                const bookingId = session.bookingID || session.bookingId;
+                const isPending = statusLower === 'pending';
+                // Can cancel pending, confirmed, or scheduled bookings
+                const canCancel = statusLower === 'pending' || statusLower === 'confirmed' || statusLower === 'scheduled';
+                const isCancelled = statusLower === 'cancelled';
+                
+                // Determine badge color based on status
+                let badgeClass = 'bg-secondary';
+                if (statusLower === 'confirmed' || statusLower === 'scheduled') {
+                  badgeClass = 'bg-success';
+                } else if (statusLower === 'pending') {
+                  badgeClass = 'bg-warning text-dark';
+                } else if (statusLower === 'cancelled') {
+                  badgeClass = 'bg-danger';
+                } else if (statusLower === 'completed') {
+                  badgeClass = 'bg-primary';
+                }
+                
+                return `
                 <tr>
-              <td>${session.booking_Day}</td>
-              <td>${formatTime(session.booking_Time)}</td>
-              <td>N/A</td>
-              <td>${session.clientid}</td>
-              <td>N/A</td>
+              <td>${session.bookingDay || session.booking_Day}</td>
+              <td>${formatTime(session.bookingTime || session.booking_Time)}</td>
+              <td>1 hour</td>
+              <td>${session.clientName || 'Unknown'}</td>
+              <td>****${session.cardLastFour || '****'}</td>
               <td>
-                <span class="badge bg-${session.bookingStatus === 'Scheduled' ? 'success' : 'secondary'}">
-                  ${session.bookingStatus}
+                <span class="badge ${badgeClass}">
+                  ${status}
                 </span>
               </td>
+              <td>
+                ${!isCancelled ? `
+                  <div class="btn-group" role="group">
+                    ${isPending ? `
+                      <button class="btn btn-sm btn-success" onclick="handleConfirmBooking(${bookingId})" title="Confirm this booking">
+                        Confirm
+                      </button>
+                    ` : ''}
+                    ${canCancel ? `
+                      <button class="btn btn-sm btn-danger" onclick="handleCancelBookingByTrainer(${bookingId})" title="Cancel this booking">
+                        Cancel
+                      </button>
+                    ` : ''}
+                  </div>
+                ` : '<span class="text-muted">-</span>'}
+              </td>
             </tr>
-          `
+          `;
+              }
             )
             .join('')}
         </tbody>
@@ -324,6 +363,66 @@ function formatTime(timeSpan) {
     return `${displayHours}:${minutes} ${ampm}`;
   }
   return timeSpan;
+}
+
+/**
+ * Handle confirming a pending booking
+ */
+async function handleConfirmBooking(bookingId) {
+  const user = getCurrentUser();
+  if (!user || !user.trainerId) {
+    showAlert('Trainer ID not found. Please login again.', 'danger');
+    return;
+  }
+
+  // Confirm action
+  if (!confirm('Are you sure you want to confirm this booking?')) {
+    return;
+  }
+
+  try {
+    const result = await confirmBooking(bookingId, user.trainerId);
+    
+    if (result.success) {
+      showAlert('✅ Booking confirmed successfully', 'success');
+      // Reload dashboard
+      loadTrainerDashboard();
+    } else {
+      showAlert(`Error confirming booking: ${result.message || 'Unknown error'}`, 'danger');
+    }
+  } catch (error) {
+    showAlert(`Error confirming booking: ${error.message}`, 'danger');
+  }
+}
+
+/**
+ * Handle cancelling a booking by trainer
+ */
+async function handleCancelBookingByTrainer(bookingId) {
+  const user = getCurrentUser();
+  if (!user || !user.trainerId) {
+    showAlert('Trainer ID not found. Please login again.', 'danger');
+    return;
+  }
+
+  // Confirm cancellation
+  if (!confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) {
+    return;
+  }
+
+  try {
+    const result = await cancelBookingByTrainer(bookingId, user.trainerId);
+    
+    if (result.success) {
+      showAlert('✅ Booking cancelled successfully', 'success');
+      // Reload dashboard
+      loadTrainerDashboard();
+    } else {
+      showAlert(`Error cancelling booking: ${result.message || 'Unknown error'}`, 'danger');
+    }
+  } catch (error) {
+    showAlert(`Error cancelling booking: ${error.message}`, 'danger');
+  }
 }
 
 // showAlert is now defined in api.js as a shared utility function

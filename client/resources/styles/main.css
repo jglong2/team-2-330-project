@@ -149,10 +149,60 @@ body {
   cursor: not-allowed;
 }
 
+/* Miami Vice Purple/Pink Color Scheme */
+:root {
+  --miami-vice-primary: #FF1493; /* Deep Pink */
+  --miami-vice-primary-dark: #C71585; /* Medium Violet Red */
+  --miami-vice-primary-light: #FF69B4; /* Hot Pink */
+}
+
+/* Override Bootstrap primary button colors */
+.btn-primary {
+  background-color: var(--miami-vice-primary) !important;
+  border-color: var(--miami-vice-primary) !important;
+  color: white !important;
+}
+
+.btn-primary:hover {
+  background-color: var(--miami-vice-primary-dark) !important;
+  border-color: var(--miami-vice-primary-dark) !important;
+  color: white !important;
+}
+
+.btn-primary:active,
+.btn-primary:focus {
+  background-color: var(--miami-vice-primary-dark) !important;
+  border-color: var(--miami-vice-primary-dark) !important;
+  box-shadow: 0 0 0 0.25rem rgba(255, 20, 147, 0.5) !important;
+}
+
+.btn-primary:disabled {
+  background-color: var(--miami-vice-primary-light) !important;
+  border-color: var(--miami-vice-primary-light) !important;
+  opacity: 0.6;
+}
+
 .time-slot-btn.btn-primary {
-  background-color: #0d6efd;
-  border-color: #0d6efd;
-  color: white;
+  background-color: var(--miami-vice-primary) !important;
+  border-color: var(--miami-vice-primary) !important;
+  color: white !important;
+}
+
+.time-slot-btn.btn-primary:hover {
+  background-color: var(--miami-vice-primary-dark) !important;
+  border-color: var(--miami-vice-primary-dark) !important;
+}
+
+/* Badge primary color */
+.badge.bg-primary {
+  background-color: var(--miami-vice-primary) !important;
+}
+
+/* Alert info color (if you want to match) */
+.alert-info {
+  background-color: rgba(255, 20, 147, 0.1);
+  border-color: var(--miami-vice-primary);
+  color: var(--miami-vice-primary-dark);
 }
 
 /* Responsive adjustments */
